@@ -1,4 +1,23 @@
+/*
+ * @Author: shanghanjin
+ * @Date: 2024-09-18 10:11:05
+ * @LastEditTime: 2024-11-15 16:17:43
+ * @FilePath: \CloudDiskWeb\vue.config.js
+ * @Description: 
+ */
 const { defineConfig } = require('@vue/cli-service')
 module.exports = defineConfig({
-  transpileDependencies: true
+  configureWebpack: {
+    devtool: 'source-map'
+  },
+  transpileDependencies: true,
+  devServer: {
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:8080',
+        changeOrigin: true,
+        pathRewrite: { '^/api': '' }
+      }
+    }
+  }
 })

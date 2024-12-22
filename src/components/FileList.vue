@@ -45,6 +45,7 @@
         />
       </span>
       <div class="actions">
+        <button @click="downloadFile(file)" class="action-button">下载</button>
         <button @click="deleteFile(file)" class="action-button">删除</button>
       </div>
     </li>
@@ -87,8 +88,8 @@ export default {
 
       // 检查名称是否为空或重复
       if (!newName || this.folders.some(folder => folder !== item && folder.name === newName)) {
-        this.showToast('文件夹名称无效或已存在');
-        this.cancelEdit();
+        console.log('文件夹名称无效或已存在');
+        this.cancelEdit(item);
         return;
       }
 
@@ -100,7 +101,7 @@ export default {
         if (newName !== originalName) {
           this.updateItemName(item, newName, this.isEditingFolder);
         }
-        this.cancelEdit();
+        this.cancelEdit(item);
       }
     },
     cancelEdit(item) {
@@ -155,6 +156,9 @@ export default {
     },
     deleteFolder(folder) {
       this.$emit('delete-folder', folder);
+    },
+    downloadFile(file) {
+      this.$emit('download-file', file);
     }
   }
 };

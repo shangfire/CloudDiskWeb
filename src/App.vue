@@ -13,7 +13,7 @@
       <button @click="newFolder">新建文件夹</button>
       <button @click="uploadFile">上传文件</button>
     </nav>
-    <file-list :files="files" :current-path="currentPath" @delete-file="handleDeleteFile" @enter-folder="handleEnterFolder"></file-list>
+    <file-list :folders="folders" :files="files" :current-path="currentPath" @delete-file="handleDeleteFile" @enter-folder="handleEnterFolder"></file-list>
   </div>
 </template>
 
@@ -39,7 +39,8 @@ export default {
     async queryFolder() {
       try {
         const url = `${process.env.VUE_APP_API_BASE_URL}/api/queryFolder`;
-        const response = await axio.post(url, { folderID: this.currentFolderId });
+        // 确保currentFolderId有效，如果无效undefined时，axio会自动消除该字段
+        const response = await axio.post(url, { folderID: this.currentFolderID });
         const { folders, files } = response.data;
         
         this.folders = folders;

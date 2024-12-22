@@ -1,4 +1,10 @@
 <template>  
+  <ul>
+    <li v-for="folder in folders" :key="folder.path">
+      {{ folder.name }}
+      <button @click="enterFolder(folder.path)">进入</button>
+    </li>
+  </ul>
   <ul>  
     <li v-for="file in files" :key="file.path">  
       {{ file.name }}  
@@ -11,7 +17,7 @@
 <script>  
 export default {  
   name: 'FileList',  
-  props: ['files', 'currentPath'],  
+  props: ['folders', 'files', 'currentPath'],  
   methods: {  
     enterFolder(path) {  
       this.$emit('enter-folder', path);  

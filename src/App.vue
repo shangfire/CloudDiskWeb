@@ -1,7 +1,7 @@
 <!--
  * @Author: shanghanjin
  * @Date: 2024-09-18 10:11:05
- * @LastEditTime: 2024-12-22 17:59:35
+ * @LastEditTime: 2024-12-25 18:19:24
  * @FilePath: \CloudDiskWeb\src\App.vue
  * @Description: 
 -->
@@ -67,6 +67,7 @@ export default {
   },
   methods: {
     async queryFolder(folderID) {
+      // 实现查询文件夹的逻辑
       try {
         const url = `${process.env.VUE_APP_API_BASE_URL}/api/queryFolder`;
         // 确保currentFolderId有效，如果无效undefined时，axio会自动消除该字段
@@ -108,9 +109,11 @@ export default {
       this.$refs.fileList.createFolder();
     },
     triggerFileInput() {
+      // 触发文件上传的 input 元素
       this.$refs.fileInput.click();
     },
     async uploadFiles(event) {
+      // 实现文件上传的逻辑
       const files = event.target.files;
 
       for (let file of files) {
@@ -141,6 +144,7 @@ export default {
       event.target.value = '';
     },
     async uploadFileAPI(formData) {
+      // 实现上传文件的 API 请求
       try {
         const url = `${process.env.VUE_APP_API_BASE_URL}/api/uploadFile`;
         const config = {
@@ -217,6 +221,7 @@ export default {
       this.queryFolder(folder.id);
     },
     async handleDownloadFile(file) {
+      // 处理下载文件的逻辑
       try {
         const response = await axio({
           url: `${process.env.VUE_APP_API_BASE_URL}/api/downloadFile`,
@@ -228,18 +233,11 @@ export default {
           }
         });
 
-        // 从响应头部获取文件名
-        const contentDisposition = response.headers['Content-Disposition'];
-        let filename = 'download';
-        if (contentDisposition && contentDisposition.indexOf('filename=') !== -1) {
-          filename = contentDisposition.split('filename=')[1].replace(/"/g, '');
-        }
-
         // 创建一个隐藏的 <a> 元素用于触发下载
         const url = window.URL.createObjectURL(new Blob([response.data]));
         const link = document.createElement('a');
         link.href = url;
-        link.setAttribute('download', filename); // 设置下载文件名
+        link.setAttribute('download', file.name); // 设置下载文件名
 
         // 将 <a> 元素添加到 DOM 中
         document.body.appendChild(link);

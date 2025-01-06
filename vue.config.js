@@ -11,6 +11,7 @@ module.exports = defineConfig({
     devtool: 'source-map'
   },
   transpileDependencies: true,
+  productionSourceMap: false,
   devServer: {
     proxy: {
       '/api': {

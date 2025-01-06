@@ -1,3 +1,10 @@
+<!--
+ * @Author: shanghanjin
+ * @Date: 2024-12-24 10:19:51
+ * @LastEditTime: 2025-01-06 17:45:08
+ * @FilePath: \CloudDiskWeb\src\components\FileList.vue
+ * @Description: 
+-->
 <template>
   <ul class="items-list">
     <!-- 文件夹列表 -->
@@ -33,7 +40,9 @@
           alt="File Icon" 
           class="icon"
         />
-        <template v-if="!isEditing(file)">{{ file.name }}</template>
+        <template v-if="!isEditing(file)">
+          <span class="file-name">{{ file.name }}</span>
+        </template>
         <input 
           v-else 
           type="text" 
@@ -44,6 +53,7 @@
           @keyup.esc="cancelEdit(file)"
         />
       </span>
+      <span class="file-size" v-if="!isEditing(file)">({{ formatFileSize(file.size) }})</span>
       <div class="actions">
         <button @click="downloadFile(file)" class="action-button">下载</button>
         <button @click="deleteFile(file)" class="action-button">删除</button>
@@ -159,6 +169,13 @@ export default {
     },
     downloadFile(file) {
       this.$emit('download-file', file);
+    },
+    formatFileSize(size) {
+      if (size === 0) return '0 Bytes';
+      const k = 1024;
+      const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+      const i = Math.floor(Math.log(size) / Math.log(k));
+      return parseFloat((size / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
     }
   }
 };
@@ -184,5 +201,16 @@ export default {
 
 .action-button {
   margin-left: auto;
+}
+
+.file-name {
+  font-size: 0.9em;
+  color: #333;
+}
+
+.file-size {
+  font-size: 0.9em;
+  color: #777;
+  margin-left: auto; /* 创建占位区域，使文件大小靠右 */
 }
 </style>

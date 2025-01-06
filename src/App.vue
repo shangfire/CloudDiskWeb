@@ -1,7 +1,7 @@
 <!--
  * @Author: shanghanjin
  * @Date: 2024-09-18 10:11:05
- * @LastEditTime: 2024-12-25 18:19:24
+ * @LastEditTime: 2025-01-06 17:09:35
  * @FilePath: \CloudDiskWeb\src\App.vue
  * @Description: 
 -->
@@ -66,6 +66,11 @@ export default {
     };
   },
   methods: {
+    sortFoldersAndFiles(folders = this.folders, files = this.files) {
+      // 对 folders 和 files 按照名称排序
+      folders.sort((a, b) => a.name.localeCompare(b.name));
+      files.sort((a, b) => a.name.localeCompare(b.name));
+    },
     async queryFolder(folderID) {
       // 实现查询文件夹的逻辑
       try {
@@ -74,6 +79,8 @@ export default {
         const response = await axio.post(url, { folderID: folderID });
         const { folders, files } = response.data;
         
+        this.sortFoldersAndFiles(folders, files);
+
         this.currentPath = response.data.self.path;
         this.parentFolderID = response.data.self.parentFolderId;
         this.currentFolderID = response.data.self.id;
@@ -92,6 +99,8 @@ export default {
         await axio.post(url, postData);
 
         item.name = newName;
+
+        this.sortFoldersAndFiles();
       } catch (error) {
         console.error(error);
       }
@@ -131,6 +140,7 @@ export default {
           const response = await this.uploadFileAPI(formData);
 
           this.files.push(response.data);
+          this.sortFoldersAndFiles();
         } catch (error) {
           console.error('上传文件失败:', error);
         } finally {
@@ -177,6 +187,8 @@ export default {
         
         // 更新文件夹列表
         this.folders.push(response.data);
+
+        this.sortFoldersAndFiles();
       } catch (error) {
         console.log('创建文件夹失败，请重试');
         this.$refs.fileList.cancelEdit(tempFolder); // 取消编辑并移除临时文件夹

@@ -3,34 +3,109 @@
  * @Date: 2024-09-18 10:11:05
  * @LastEditTime: 2025-01-06 17:09:35
  * @FilePath: \CloudDiskWeb\src\App.vue
- * @Description: 
+ * @Description:
 -->
 <template>
   <div id="app">
     <nav class="navbar">
-      <button @click="goToParent" class="nav-button">返回</button>
+      <button @click="goToParent" class="nav-button" :disabled="uploading">返回</button>
       <input type="text" disabled :value="currentPath" class="path-input" />
       <div class="nav-right">
-        <button @click="newFolder" class="nav-button">新建文件夹</button>
-        <button @click="triggerFileInput" class="nav-button">上传文件</button>
-        <!-- 隐藏的文件输入控件 -->
-        <input 
-          type="file" 
-          ref="fileInput" 
-          multiple 
-          @change="uploadFiles"
-          style="display: none;"
-        />
+        <button @click="newFolder" class="nav-button" :disabled="uploading">新建文件夹</button>
+        <button class="nav-button" :disabled="uploading" @click="triggerFileInput">上传文件</button>
+        <button class="nav-button" :disabled="uploading" @click="triggerFolderInput">上传文件夹</button>
+        <input type="file" ref="fileInput" multiple @change="handleFileSelect" style="display:none;" />
+        <input type="file" ref="folderInput" webkitdirectory multiple @change="handleFolderSelect" style="display:none;" />
       </div>
     </nav>
-    <!-- 进度条 -->
-    <progress v-if="uploading" :value="uploadProgress" max="100" class="upload-progress">{{ uploadProgress }}%</progress>
+
+    <!-- 上传面板 -->
+    <div v-if="uploading" class="upload-panel">
+      <div class="upload-info">
+        <span class="upload-label">{{ uploadLabel }}</span>
+        <span class="upload-filename">{{ uploadingFileName }}</span>
+      </div>
+      <div class="upload-progress-wrap">
+        <div class="upload-progress-bar" :style="{ width: uploadProgress + '%' }"></div>
+      </div>
+      <span class="upload-percent">{{ uploadProgress }}%</span>
+      <button @click="cancelUpload" class="cancel-upload-btn">取消</button>
+    </div>
+
+    <!-- 文件夹打包提示 -->
+    <div v-if="downloadingFolder" class="downloading-banner">
+      正在打包，请稍候...
+    </div>
+
+    <p class="paste-hint">支持 Ctrl+V 粘贴上传：复制<strong>文件</strong>后按 Ctrl+V 可直接上传，复制<strong>文本</strong>后按 Ctrl+V 可创建 .txt 文件上传；上传文件夹请使用"上传文件夹"按钮（浏览器限制，Ctrl+V 无法获取文件夹内容）</p>
+
+    <!-- Modal -->
+    <div v-if="modal.visible" class="modal-overlay" @click.self="closeModal">
+      <div class="modal-box" :class="{ large: modal.type === 'upload-preview' }">
+
+        <!-- 纯文本粘贴 -->
+        <template v-if="modal.type === 'text'">
+          <div class="modal-field">
+            <label class="modal-label">文件名</label>
+            <input v-model="modal.filename" class="modal-title-input" />
+          </div>
+          <div class="modal-field">
+            <label class="modal-label">内容预览</label>
+            <pre class="modal-preview">{{ modal.preview }}</pre>
+          </div>
+          <div class="modal-actions">
+            <button @click="closeModal" class="modal-btn">取消</button>
+            <button @click="confirmTextUpload" class="modal-btn primary">确定上传</button>
+          </div>
+        </template>
+
+        <!-- 上传预览 -->
+        <template v-else-if="modal.type === 'upload-preview'">
+          <div class="preview-header">
+            <span class="modal-msg">准备上传</span>
+            <span class="preview-stats">{{ modal.stats.folders }} 个文件夹，{{ modal.stats.files }} 个文件</span>
+          </div>
+          <div v-if="modal.conflicts.length > 0" class="conflict-warning">
+            ⚠ 以下名称与当前目录冲突，请先删除或重命名后再上传：
+            <ul class="conflict-list">
+              <li v-for="c in modal.conflicts" :key="c">{{ c }}</li>
+            </ul>
+          </div>
+          <div class="tree-container">
+            <div
+              v-for="item in modal.flatList"
+              :key="item.path"
+              class="tree-item"
+              :style="{ paddingLeft: (item.depth * 16 + 8) + 'px' }"
+            >
+              <span class="tree-icon">{{ item.isFolder ? '📁' : '📄' }}</span>
+              <span class="tree-name" :class="{ 'conflict-name': item.depth === 0 && modal.conflicts.includes(item.name) }">{{ item.name }}</span>
+            </div>
+          </div>
+          <div class="modal-actions">
+            <button @click="closeModal" class="modal-btn">取消</button>
+            <button @click="confirmUpload" class="modal-btn primary" :disabled="modal.conflicts.length > 0">确认上传</button>
+          </div>
+        </template>
+
+        <!-- 错误 -->
+        <template v-else-if="modal.type === 'error'">
+          <p class="modal-msg">剪贴板中没有可上传的内容。</p>
+          <div class="modal-actions">
+            <button @click="closeModal" class="modal-btn">关闭</button>
+          </div>
+        </template>
+
+      </div>
+    </div>
+
     <file-list
       :folders="folders"
       :files="files"
       :currentPath="currentPath"
       :currentFolderID="currentFolderID"
       :parentFolderID="parentFolderID"
+      :disabled="uploading"
       @delete-file="handleDeleteFile"
       @delete-folder="handleDeleteFolder"
       @enter-folder="handleEnterFolder"
@@ -39,6 +114,7 @@
       @remove-temp-folder="handleRemoveTempFolder"
       @create-folder="handleCreateFolder"
       @download-file="handleDownloadFile"
+      @download-folder="handleDownloadFolder"
       ref="fileList"
     ></file-list>
   </div>
@@ -50,10 +126,7 @@ import axio from 'axios';
 
 export default {
   name: 'App',
-  components: {
-    // 组件名是PascalCase，在template中建议使用kebab-case，能对得上
-    FileList
-  },
+  components: { FileList },
   data() {
     return {
       currentPath: '/',
@@ -62,25 +135,39 @@ export default {
       folders: [],
       files: [],
       uploading: false,
-      uploadProgress: 0
+      uploadProgress: 0,
+      uploadLabel: '正在上传',
+      uploadingFileName: '',
+      uploadController: null,
+      uploadTotal: 0,
+      uploadCurrent: 0,
+      uploadCancelled: false,
+      downloadingFolder: false,
+      modal: {
+        visible: false,
+        type: null,
+        filename: '',
+        content: '',
+        preview: '',
+        uploadTree: null,
+        flatList: [],
+        stats: { folders: 0, files: 0 },
+        conflicts: [],
+      },
     };
   },
   methods: {
+    // ── 目录操作 ─────────────────────────────────────────
     sortFoldersAndFiles(folders = this.folders, files = this.files) {
-      // 对 folders 和 files 按照名称排序
       folders.sort((a, b) => a.name.localeCompare(b.name));
       files.sort((a, b) => a.name.localeCompare(b.name));
     },
     async queryFolder(folderID) {
-      // 实现查询文件夹的逻辑
       try {
-        const url = `${process.env.VUE_APP_API_BASE_URL}/api/queryFolder`;
-        // 确保currentFolderId有效，如果无效undefined时，axio会自动消除该字段
-        const response = await axio.post(url, { folderID: folderID });
+        const url = `${import.meta.env.VITE_API_BASE_URL}/api/queryFolder`;
+        const response = await axio.post(url, { folderID });
         const { folders, files } = response.data;
-        
         this.sortFoldersAndFiles(folders, files);
-
         this.currentPath = response.data.self.path;
         this.parentFolderID = response.data.self.parentFolderId;
         this.currentFolderID = response.data.self.id;
@@ -90,183 +177,376 @@ export default {
         console.error(error);
       }
     },
-    async updateName(item, newName, isFolder) {
-      // 实现更新文件或文件夹名称的逻辑
+    goToParent() {
+      if (this.parentFolderID !== 0) this.queryFolder(this.parentFolderID);
+    },
+    newFolder() {
+      this.$refs.fileList.createFolder();
+    },
+    handleEnterFolder(folder) {
+      this.queryFolder(folder.id);
+    },
+
+    // ── 上传入口 ─────────────────────────────────────────
+    triggerFileInput() { this.$refs.fileInput.click(); },
+    triggerFolderInput() { this.$refs.folderInput.click(); },
+
+    handleFileSelect(event) {
+      const files = Array.from(event.target.files);
+      event.target.value = '';
+      if (files.length) this.prepareUploadPreview(files);
+    },
+    handleFolderSelect(event) {
+      const files = Array.from(event.target.files);
+      event.target.value = '';
+      if (files.length) this.prepareUploadPreview(files);
+    },
+
+    // ── 上传预览构建 ──────────────────────────────────────
+    prepareUploadPreview(fileList) {
+      const tree = this.buildUploadTree(fileList);
+      const flatList = this.flattenTree(tree);
+      const stats = this.countStats(tree);
+      const conflicts = this.checkDuplicates(tree);
+      this.modal = {
+        visible: true,
+        type: 'upload-preview',
+        filename: '',
+        content: '',
+        preview: '',
+        uploadTree: tree,
+        flatList,
+        stats,
+        conflicts,
+      };
+    },
+
+    buildUploadTree(fileList) {
+      const root = { children: {} };
+      for (const file of fileList) {
+        const path = file.webkitRelativePath || file.name;
+        const parts = path.split('/').filter(Boolean);
+        let node = root;
+        for (let i = 0; i < parts.length - 1; i++) {
+          if (!node.children[parts[i]]) {
+            node.children[parts[i]] = { name: parts[i], isFolder: true, children: {} };
+          }
+          node = node.children[parts[i]];
+        }
+        const fileName = parts[parts.length - 1];
+        node.children[fileName] = { name: fileName, isFolder: false, file, children: {} };
+      }
+      return root;
+    },
+
+    flattenTree(node, depth = 0, prefix = '') {
+      const result = [];
+      const sorted = Object.values(node.children).sort((a, b) => {
+        if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+      for (const child of sorted) {
+        const path = prefix ? `${prefix}/${child.name}` : child.name;
+        result.push({ name: child.name, isFolder: child.isFolder, depth, path });
+        if (child.isFolder) {
+          result.push(...this.flattenTree(child, depth + 1, path));
+        }
+      }
+      return result;
+    },
+
+    countStats(node) {
+      let folders = 0, files = 0;
+      for (const child of Object.values(node.children)) {
+        if (child.isFolder) {
+          folders++;
+          const sub = this.countStats(child);
+          folders += sub.folders;
+          files += sub.files;
+        } else {
+          files++;
+        }
+      }
+      return { folders, files };
+    },
+
+    checkDuplicates(tree) {
+      const existing = new Set([
+        ...this.folders.map(f => f.name),
+        ...this.files.map(f => f.name),
+      ]);
+      return Object.keys(tree.children).filter(name => existing.has(name));
+    },
+
+    // ── 上传执行 ─────────────────────────────────────────
+    async confirmUpload() {
+      const tree = this.modal.uploadTree;
+      const stats = this.modal.stats;
+      this.closeModal();
+      this.uploading = true;
+      this.uploadCancelled = false;
+      this.uploadTotal = stats.files;
+      this.uploadCurrent = 0;
+      this.uploadLabel = stats.folders > 0 ? '正在创建目录' : '正在上传文件';
+      this.uploadingFileName = '';
+      this.uploadProgress = 0;
       try {
-        const url = isFolder ? `${process.env.VUE_APP_API_BASE_URL}/api/renameFolder` : `${process.env.VUE_APP_API_BASE_URL}/api/renameFile`;
-        const postData = isFolder ? { folderID: item.id, folderName: newName } : { fileID: item.id, fileName: newName };
-        // 确保currentFolderId有效，如果无效undefined时，axio会自动消除该字段
+        await this.executeUploadTree(tree, this.currentFolderID);
+      } finally {
+        this.uploading = false;
+        this.uploadLabel = '正在上传';
+        this.uploadingFileName = '';
+        this.uploadProgress = 0;
+        this.uploadController = null;
+        this.uploadCancelled = false;
+        this.uploadTotal = 0;
+        this.uploadCurrent = 0;
+        await this.queryFolder(this.currentFolderID);
+      }
+    },
+
+    async executeUploadTree(node, parentFolderID) {
+      const sorted = Object.values(node.children).sort((a, b) => {
+        if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+      for (const child of sorted) {
+        if (this.uploadCancelled) return;
+        if (child.isFolder) {
+          try {
+            this.uploadingFileName = child.name;
+            const url = `${import.meta.env.VITE_API_BASE_URL}/api/createFolder`;
+            const response = await axio.post(url, { folderName: child.name, parentFolderID });
+            await this.executeUploadTree(child, response.data.id);
+          } catch (error) {
+            console.error('创建文件夹失败:', error);
+          }
+        } else {
+          this.uploadLabel = '正在上传文件';
+          this.uploadCurrent++;
+          this.uploadingFileName = `${child.name} (${this.uploadCurrent}/${this.uploadTotal})`;
+          this.uploadProgress = 0;
+          this.uploadController = new AbortController();
+          try {
+            const formData = new FormData();
+            formData.append('file', child.file);
+            formData.append('parentFolderID', parentFolderID);
+            formData.append('fileSize', child.file.size);
+            await this.uploadFileAPI(formData, this.uploadController.signal);
+          } catch (error) {
+            if (axio.isCancel(error) || error.code === 'ERR_CANCELED') {
+              this.uploadCancelled = true;
+              return;
+            }
+            console.error('上传文件失败:', error);
+          } finally {
+            this.uploadController = null;
+          }
+        }
+      }
+    },
+
+    // 单文件独立上传（Ctrl+V 文本、历史代码路径）
+    async uploadSingleFile(file, parentFolderID = this.currentFolderID) {
+      this.uploading = true;
+      this.uploadProgress = 0;
+      this.uploadLabel = '正在上传';
+      this.uploadingFileName = file.name;
+      this.uploadController = new AbortController();
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('parentFolderID', parentFolderID);
+        formData.append('fileSize', file.size);
+        const response = await this.uploadFileAPI(formData, this.uploadController.signal);
+        if (parentFolderID === this.currentFolderID) {
+          this.files.push(response.data);
+          this.sortFoldersAndFiles();
+        }
+        return false;
+      } catch (error) {
+        if (axio.isCancel(error) || error.code === 'ERR_CANCELED') return true;
+        console.error('上传文件失败:', error);
+        return false;
+      } finally {
+        this.uploading = false;
+        this.uploadProgress = 0;
+        this.uploadingFileName = '';
+        this.uploadController = null;
+      }
+    },
+
+    async uploadFileAPI(formData, signal) {
+      const url = `${import.meta.env.VITE_API_BASE_URL}/api/uploadFile`;
+      const response = await axio.post(url, formData, {
+        signal,
+        headers: { 'Content-Type': 'multipart/form-data' },
+        onUploadProgress: progressEvent => {
+          this.uploadProgress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+        },
+      });
+      return response;
+    },
+
+    cancelUpload() {
+      this.uploadController?.abort();
+      this.uploadCancelled = true;
+    },
+
+    // ── Ctrl+V 粘贴 ───────────────────────────────────────
+    async handlePasteEvent(event) {
+      const tag = document.activeElement.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+
+      const files = event.clipboardData?.files;
+      if (files && files.length > 0) {
+        event.preventDefault();
+        this.prepareUploadPreview(Array.from(files));
+        return;
+      }
+      const text = (event.clipboardData?.getData('text/plain') || '').trim();
+      if (text) {
+        event.preventDefault();
+        this.processPasteText(text);
+        return;
+      }
+      this.modal = { ...this.modal, visible: true, type: 'error' };
+    },
+
+    processPasteText(trimmed) {
+      const now = new Date();
+      const pad = n => String(n).padStart(2, '0');
+      const ts = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+      const lines = trimmed.split('\n');
+      const preview = lines.length > 8 ? lines.slice(0, 8).join('\n') + '\n...' : trimmed;
+      this.modal = {
+        visible: true, type: 'text',
+        filename: `${ts}.txt`, content: trimmed, preview,
+        uploadTree: null, flatList: [], stats: { folders: 0, files: 0 }, conflicts: [],
+      };
+    },
+
+    async confirmTextUpload() {
+      const filename = this.modal.filename.trim() || 'paste.txt';
+      const blob = new Blob([this.modal.content], { type: 'text/plain' });
+      const file = new File([blob], filename, { type: 'text/plain' });
+      this.closeModal();
+      await this.uploadSingleFile(file);
+    },
+
+    closeModal() {
+      this.modal.visible = false;
+    },
+
+    // ── 命名操作 ──────────────────────────────────────────
+    async updateName(item, newName, isFolder) {
+      try {
+        const url = isFolder
+          ? `${import.meta.env.VITE_API_BASE_URL}/api/renameFolder`
+          : `${import.meta.env.VITE_API_BASE_URL}/api/renameFile`;
+        const postData = isFolder
+          ? { folderID: item.id, folderName: newName }
+          : { fileID: item.id, fileName: newName };
         await axio.post(url, postData);
-
         item.name = newName;
-
         this.sortFoldersAndFiles();
       } catch (error) {
         console.error(error);
       }
     },
-    goToParent() {
-      // 实现返回上一级目录的逻辑
-      if (this.parentFolderID === 0) {
-        return;
-      }
 
-      this.queryFolder(this.parentFolderID);
-    },
-    newFolder() {
-      // 实现新建文件夹的逻辑
-      this.$refs.fileList.createFolder();
-    },
-    triggerFileInput() {
-      // 触发文件上传的 input 元素
-      this.$refs.fileInput.click();
-    },
-    async uploadFiles(event) {
-      // 实现文件上传的逻辑
-      const files = event.target.files;
-
-      for (let file of files) {
-        try {
-          const formData = new FormData();
-          formData.append('file', file);
-          formData.append('parentFolderID', this.currentFolderID);
-          formData.append('fileSize', file.size);
-
-          // 开始上传时设置标志和进度
-          this.uploading = true;
-          this.uploadProgress = 0;
-
-          // 发送上传文件的 API 请求
-          const response = await this.uploadFileAPI(formData);
-
-          this.files.push(response.data);
-          this.sortFoldersAndFiles();
-        } catch (error) {
-          console.error('上传文件失败:', error);
-        } finally {
-          // 上传完成后重置标志和进度
-          this.uploading = false;
-          this.uploadProgress = 0;
-        }
-      }
-
-      // 清空文件输入框
-      event.target.value = '';
-    },
-    async uploadFileAPI(formData) {
-      // 实现上传文件的 API 请求
-      try {
-        const url = `${process.env.VUE_APP_API_BASE_URL}/api/uploadFile`;
-        const config = {
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
-          onUploadProgress: progressEvent => {
-            // 计算上传进度
-            this.uploadProgress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-          },
-        };
-
-        const response = await axio.post(url, formData, config);
-
-        return response;
-      } catch (error) {
-        console.error('上传文件失败:', error);
-      }
-    },
     async handleCreateFolder(tempFolder, name) {
-      // 处理创建文件夹的逻辑
       try {
-        // 发送创建文件夹的 API 请求
-        const url = `${process.env.VUE_APP_API_BASE_URL}/api/createFolder`;
-        const postData = { folderName: name, parentFolderID: tempFolder.parentFolderId };
-        const response = await axio.post(url, postData);
-
-        // 清除编辑状态
+        const url = `${import.meta.env.VITE_API_BASE_URL}/api/createFolder`;
+        const response = await axio.post(url, { folderName: name, parentFolderID: tempFolder.parentFolderId });
         this.$refs.fileList.cancelEdit(tempFolder);
-        
-        // 更新文件夹列表
         this.folders.push(response.data);
-
         this.sortFoldersAndFiles();
       } catch (error) {
         console.log('创建文件夹失败，请重试');
-        this.$refs.fileList.cancelEdit(tempFolder); // 取消编辑并移除临时文件夹
+        this.$refs.fileList.cancelEdit(tempFolder);
       }
     },
-    handleAddTempFolder(tempFolder){
-      // 处理添加临时文件夹的逻辑
-      this.folders.push(tempFolder)
+
+    handleAddTempFolder(tempFolder) { this.folders.push(tempFolder); },
+    handleRemoveTempFolder(tempFolder) {
+      this.folders = this.folders.filter(f => f !== tempFolder);
     },
-    handleRemoveTempFolder(tempFolder){
-      // 处理移除临时文件夹的逻辑
-      this.folders = this.folders.filter(folder => folder !== tempFolder)
-    },
+
     async handleDeleteFile(file) {
-      // 处理删除文件的逻辑
       try {
-        const url = `${process.env.VUE_APP_API_BASE_URL}/api/deleteFile`;
-        const postData = { fileID: file.id };
-        await axio.post(url, postData);
-
-        this.files = this.files.filter(item => item !== file);
-      }
-      catch (error) {
+        await axio.post(`${import.meta.env.VITE_API_BASE_URL}/api/deleteFile`, { fileID: file.id });
+        this.files = this.files.filter(f => f !== file);
+      } catch (error) {
         console.error(error);
       }
     },
+
     async handleDeleteFolder(folder) {
-      // 处理删除文件夹的逻辑
       try {
-        const url = `${process.env.VUE_APP_API_BASE_URL}/api/deleteFolder`;
-        const postData = { folderID: folder.id };
-        await axio.post(url, postData);
-
-        this.folders = this.folders.filter(item => item !== folder);
-      }
-      catch (error) {
+        await axio.post(`${import.meta.env.VITE_API_BASE_URL}/api/deleteFolder`, { folderID: folder.id });
+        this.folders = this.folders.filter(f => f !== folder);
+      } catch (error) {
         console.error(error);
       }
     },
-    handleEnterFolder(folder) {
-      // 处理进入文件夹的逻辑
-      this.queryFolder(folder.id);
-    },
-    async handleDownloadFile(file) {
-      // 处理下载文件的逻辑
+
+    async handleDownloadFolder(folder) {
+      this.downloadingFolder = true;
       try {
         const response = await axio({
-          url: `${process.env.VUE_APP_API_BASE_URL}/api/downloadFile`,
-          method: 'POST', // 使用 POST 方法
-          data: { fileId: file.id }, // 发送文件 ID 作为请求体数据
-          responseType: 'blob', // 指定响应类型为 blob
-          headers: {
-            'Content-Type': 'application/json' // 设置请求头
-          }
+          url: `${import.meta.env.VITE_API_BASE_URL}/api/downloadFolder`,
+          method: 'POST',
+          data: { folderID: folder.id },
+          responseType: 'blob',
+          headers: { 'Content-Type': 'application/json' },
         });
-
-        // 创建一个隐藏的 <a> 元素用于触发下载
         const url = window.URL.createObjectURL(new Blob([response.data]));
         const link = document.createElement('a');
         link.href = url;
-        link.setAttribute('download', file.name); // 设置下载文件名
-
-        // 将 <a> 元素添加到 DOM 中
+        link.setAttribute('download', folder.name + '.zip');
         document.body.appendChild(link);
         link.click();
-
-        // 下载完成后移除 <a> 元素
         link.remove();
-        window.URL.revokeObjectURL(url); // 释放对象 URL
+        window.URL.revokeObjectURL(url);
+      } catch (error) {
+        console.error('下载文件夹失败:', error);
+      } finally {
+        this.downloadingFolder = false;
+      }
+    },
+
+    async handleDownloadFile(file) {
+      try {
+        const response = await axio({
+          url: `${import.meta.env.VITE_API_BASE_URL}/api/downloadFile`,
+          method: 'POST',
+          data: { fileId: file.id },
+          responseType: 'blob',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        const url = window.URL.createObjectURL(new Blob([response.data]));
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', file.name);
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
       } catch (error) {
         console.error('下载文件失败:', error);
       }
-    }
+    },
+  },
+  mounted() {
+    document.addEventListener('paste', this.handlePasteEvent);
+  },
+  unmounted() {
+    document.removeEventListener('paste', this.handlePasteEvent);
   },
   created() {
-    // 页面加载时查询根目录的文件列表
     this.queryFolder(this.currentFolderID);
-  }
+  },
 };
 </script>
 
@@ -274,17 +554,17 @@ export default {
 .navbar {
   display: flex;
   align-items: center;
-  width: 100%; /* 确保navbar占据整个宽度 */
+  width: 100%;
 }
 
 .nav-button {
-  margin: 0 5px; /* 给按钮添加一些间距 */
+  margin: 0 5px;
 }
 
 .path-input {
-  flex-grow: 1; /* 输入框将填充所有剩余空间 */
-  margin: 0 10px; /* 可选：给输入框添加一些间距 */
-  min-width: 0; /* 防止输入框在极小屏幕下出现溢出问题 */
+  flex-grow: 1;
+  margin: 0 10px;
+  min-width: 0;
 }
 
 .nav-right {
@@ -292,15 +572,241 @@ export default {
   align-items: center;
 }
 
-.file-input {
-  /* 根据需要调整样式 */
-  margin-left: 8px;
+
+.downloading-banner {
+  margin-top: 6px;
+  padding: 8px 12px;
+  background: #f0f7ff;
+  border: 1px solid #b3d4f5;
+  border-radius: 6px;
+  font-size: 0.9em;
+  color: #2f6f9f;
 }
 
-.upload-progress {
-  width: 100%;
-  margin-top: 8px; /* 与导航栏之间留出一点空间 */
-  height: 5px; /* 设置高度 */
-  background-color: #f3f3f3; /* 设置背景颜色 */
+.paste-hint {
+  margin: 6px 0 0;
+  font-size: 0.78em;
+  color: #aaa;
 }
+
+/* 上传面板 */
+.upload-panel {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  margin-top: 6px;
+  background: #f0f7ff;
+  border: 1px solid #b3d4f5;
+  border-radius: 6px;
+}
+
+.upload-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+.upload-label {
+  font-size: 0.75em;
+  color: #666;
+}
+
+.upload-filename {
+  font-size: 0.9em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 300px;
+}
+
+.upload-progress-wrap {
+  flex: 1;
+  height: 6px;
+  background: #d0e6f7;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.upload-progress-bar {
+  height: 100%;
+  background: #3a9bd5;
+  border-radius: 3px;
+  transition: width 0.2s;
+}
+
+.upload-percent {
+  font-size: 0.85em;
+  color: #333;
+  min-width: 36px;
+  text-align: right;
+}
+
+.cancel-upload-btn {
+  padding: 2px 10px;
+  font-size: 0.85em;
+  color: #d9534f;
+  border: 1px solid #d9534f;
+  background: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.cancel-upload-btn:hover { background: #fdf0f0; }
+
+/* Modal */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+
+.modal-box {
+  background: #fff;
+  border-radius: 8px;
+  padding: 24px;
+  width: 480px;
+  max-width: 90vw;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.modal-box.large {
+  width: 560px;
+}
+
+.modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.modal-label {
+  font-size: 0.78em;
+  color: #666;
+}
+
+.modal-title-input {
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 0.95em;
+}
+
+.modal-title-input:focus {
+  outline: none;
+  border-color: #3a9bd5;
+}
+
+.modal-preview {
+  margin: 0;
+  padding: 8px 10px;
+  background: #f7f7f7;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  font-size: 0.85em;
+  line-height: 1.5;
+  max-height: 180px;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.modal-msg {
+  margin: 0;
+  font-size: 0.95em;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.modal-btn {
+  padding: 6px 16px;
+  border-radius: 4px;
+  border: 1px solid #ccc;
+  background: #fff;
+  cursor: pointer;
+  font-size: 0.9em;
+}
+
+.modal-btn.primary {
+  background: #3a9bd5;
+  border-color: #3a9bd5;
+  color: #fff;
+}
+
+.modal-btn.primary:hover { background: #2f87bf; }
+.modal-btn.primary:disabled {
+  background: #a0c8e8;
+  border-color: #a0c8e8;
+  cursor: not-allowed;
+}
+
+/* 上传预览 */
+.preview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.preview-stats {
+  font-size: 0.82em;
+  color: #666;
+}
+
+.conflict-warning {
+  padding: 8px 12px;
+  background: #fff8e1;
+  border: 1px solid #f5c842;
+  border-radius: 4px;
+  font-size: 0.85em;
+  color: #7a5a00;
+}
+
+.conflict-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.conflict-list li { padding: 1px 0; }
+
+.tree-container {
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  max-height: 280px;
+  overflow-y: auto;
+  background: #fafafa;
+}
+
+.tree-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 3px;
+  padding-bottom: 3px;
+  padding-right: 8px;
+  font-size: 0.88em;
+  line-height: 1.4;
+}
+
+.tree-item:not(:last-child) {
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.tree-icon { flex-shrink: 0; font-size: 0.9em; }
+
+.tree-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.conflict-name { color: #c0392b; font-weight: 500; }
 </style>

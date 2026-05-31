@@ -12,8 +12,14 @@
       <input type="text" disabled :value="currentPath" class="path-input" />
       <div class="nav-right">
         <button @click="newFolder" class="nav-button" :disabled="uploading">新建文件夹</button>
-        <button class="nav-button" :disabled="uploading" @click="triggerFileInput">上传文件</button>
-        <button class="nav-button" :disabled="uploading" @click="triggerFolderInput">上传文件夹</button>
+        <div class="upload-dropdown" ref="uploadDropdown">
+          <button class="nav-button" :disabled="uploading" @click="toggleUploadMenu">上传 ▾</button>
+          <div v-if="uploadMenuOpen" class="upload-menu">
+            <button @click="triggerFileInputAndClose">上传文件</button>
+            <button @click="triggerFolderInputAndClose">上传文件夹</button>
+          </div>
+        </div>
+        <button class="nav-button" :disabled="uploading" @click="handlePasteButton">粘贴文本</button>
         <input type="file" ref="fileInput" multiple @change="handleFileSelect" style="display:none;" />
         <input type="file" ref="folderInput" webkitdirectory multiple @change="handleFolderSelect" style="display:none;" />
       </div>
@@ -32,12 +38,7 @@
       <button @click="cancelUpload" class="cancel-upload-btn">取消</button>
     </div>
 
-    <!-- 文件夹打包提示 -->
-    <div v-if="downloadingFolder" class="downloading-banner">
-      正在打包，请稍候...
-    </div>
-
-    <p class="paste-hint">支持 Ctrl+V 粘贴上传：复制<strong>文件</strong>后按 Ctrl+V 可直接上传，复制<strong>文本</strong>后按 Ctrl+V 可创建 .txt 文件上传；上传文件夹请使用"上传文件夹"按钮（浏览器限制，Ctrl+V 无法获取文件夹内容）</p>
+    <p class="paste-hint">复制<strong>文件</strong>后按 Ctrl+V 可直接上传，复制<strong>文本</strong>后按 Ctrl+V 或点击"粘贴文本"可创建 .txt 文件上传；上传文件夹请使用"上传 ▾"菜单</p>
 
     <!-- Modal -->
     <div v-if="modal.visible" class="modal-overlay" @click.self="closeModal">
@@ -85,6 +86,15 @@
           <div class="modal-actions">
             <button @click="closeModal" class="modal-btn">取消</button>
             <button @click="confirmUpload" class="modal-btn primary" :disabled="modal.conflicts.length > 0">确认上传</button>
+          </div>
+        </template>
+
+        <!-- 文件夹粘贴警告 -->
+        <template v-else-if="modal.type === 'folder-paste-warning'">
+          <p class="modal-msg">粘贴内容包含文件夹，浏览器不支持通过粘贴上传文件夹。</p>
+          <p class="modal-msg" style="color:#666;font-size:0.88em;">请使用"上传 ▾"→"上传文件夹"按钮选择文件夹上传。</p>
+          <div class="modal-actions">
+            <button @click="closeModal" class="modal-btn">关闭</button>
           </div>
         </template>
 
@@ -142,7 +152,7 @@ export default {
       uploadTotal: 0,
       uploadCurrent: 0,
       uploadCancelled: false,
-      downloadingFolder: false,
+      uploadMenuOpen: false,
       modal: {
         visible: false,
         type: null,
@@ -190,6 +200,14 @@ export default {
     // ── 上传入口 ─────────────────────────────────────────
     triggerFileInput() { this.$refs.fileInput.click(); },
     triggerFolderInput() { this.$refs.folderInput.click(); },
+    toggleUploadMenu() { this.uploadMenuOpen = !this.uploadMenuOpen; },
+    triggerFileInputAndClose() { this.uploadMenuOpen = false; this.$refs.fileInput.click(); },
+    triggerFolderInputAndClose() { this.uploadMenuOpen = false; this.$refs.folderInput.click(); },
+    handleClickOutsideUploadMenu(e) {
+      if (this.$refs.uploadDropdown && !this.$refs.uploadDropdown.contains(e.target)) {
+        this.uploadMenuOpen = false;
+      }
+    },
 
     handleFileSelect(event) {
       const files = Array.from(event.target.files);
@@ -393,10 +411,46 @@ export default {
       this.uploadCancelled = true;
     },
 
+    // ── 粘贴公共逻辑 ─────────────────────────────────────
+    hasFolder(dataTransferItems) {
+      for (const item of dataTransferItems) {
+        if (item.kind === 'file') {
+          const entry = item.webkitGetAsEntry?.();
+          if (entry?.isDirectory) return true;
+        }
+      }
+      return false;
+    },
+
+    // ── 粘贴文本按钮（移动端无法触发 Ctrl+V 的替代入口，仅支持文本）──
+    async handlePasteButton() {
+      if (!navigator.clipboard?.readText) {
+        this.modal = { ...this.modal, visible: true, type: 'error' };
+        return;
+      }
+      try {
+        const text = (await navigator.clipboard.readText()).trim();
+        if (text) {
+          this.processPasteText(text);
+        } else {
+          this.modal = { ...this.modal, visible: true, type: 'error' };
+        }
+      } catch (e) {
+        this.modal = { ...this.modal, visible: true, type: 'error' };
+      }
+    },
+
     // ── Ctrl+V 粘贴 ───────────────────────────────────────
     async handlePasteEvent(event) {
       const tag = document.activeElement.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+
+      const items = event.clipboardData?.items;
+      if (items && this.hasFolder(items)) {
+        event.preventDefault();
+        this.modal = { ...this.modal, visible: true, type: 'folder-paste-warning' };
+        return;
+      }
 
       const files = event.clipboardData?.files;
       if (files && files.length > 0) {
@@ -491,58 +545,29 @@ export default {
       }
     },
 
-    async handleDownloadFolder(folder) {
-      this.downloadingFolder = true;
-      try {
-        const response = await axio({
-          url: `${import.meta.env.VITE_API_BASE_URL}/api/downloadFolder`,
-          method: 'POST',
-          data: { folderID: folder.id },
-          responseType: 'blob',
-          headers: { 'Content-Type': 'application/json' },
-        });
-        const url = window.URL.createObjectURL(new Blob([response.data]));
-        const link = document.createElement('a');
-        link.href = url;
-        link.setAttribute('download', folder.name + '.zip');
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        window.URL.revokeObjectURL(url);
-      } catch (error) {
-        console.error('下载文件夹失败:', error);
-      } finally {
-        this.downloadingFolder = false;
-      }
+    handleDownloadFolder(folder) {
+      const link = document.createElement('a');
+      link.href = `${import.meta.env.VITE_API_BASE_URL}/api/downloadFolder?folderID=${folder.id}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
     },
 
-    async handleDownloadFile(file) {
-      try {
-        const response = await axio({
-          url: `${import.meta.env.VITE_API_BASE_URL}/api/downloadFile`,
-          method: 'POST',
-          data: { fileId: file.id },
-          responseType: 'blob',
-          headers: { 'Content-Type': 'application/json' },
-        });
-        const url = window.URL.createObjectURL(new Blob([response.data]));
-        const link = document.createElement('a');
-        link.href = url;
-        link.setAttribute('download', file.name);
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        window.URL.revokeObjectURL(url);
-      } catch (error) {
-        console.error('下载文件失败:', error);
-      }
+    handleDownloadFile(file) {
+      const link = document.createElement('a');
+      link.href = `${import.meta.env.VITE_API_BASE_URL}/api/downloadFile?fileID=${file.id}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
     },
   },
   mounted() {
     document.addEventListener('paste', this.handlePasteEvent);
+    document.addEventListener('click', this.handleClickOutsideUploadMenu);
   },
   unmounted() {
     document.removeEventListener('paste', this.handlePasteEvent);
+    document.removeEventListener('click', this.handleClickOutsideUploadMenu);
   },
   created() {
     this.queryFolder(this.currentFolderID);
@@ -572,15 +597,43 @@ export default {
   align-items: center;
 }
 
+.upload-dropdown {
+  position: relative;
+  display: inline-block;
+  margin: 0 5px;
+}
 
-.downloading-banner {
-  margin-top: 6px;
-  padding: 8px 12px;
-  background: #f0f7ff;
-  border: 1px solid #b3d4f5;
-  border-radius: 6px;
+.upload-dropdown .nav-button {
+  margin: 0;
+}
+
+.upload-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  background: #fff;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  z-index: 1000;
+  min-width: 110px;
+  overflow: hidden;
+}
+
+.upload-menu button {
+  display: block;
+  width: 100%;
+  padding: 8px 16px;
+  text-align: left;
+  border: none;
+  background: none;
+  cursor: pointer;
   font-size: 0.9em;
-  color: #2f6f9f;
+  white-space: nowrap;
+}
+
+.upload-menu button:hover {
+  background: #f0f7ff;
 }
 
 .paste-hint {
